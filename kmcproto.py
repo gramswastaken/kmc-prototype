@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 import scipy as sp
 import itertools
-# import random
+import random
 
 kb = sp.constants.k
 default_prefactor = 1e13
@@ -58,27 +58,12 @@ class Process:
 class LatticeSite:
     id: int
     cell: Tuple[int, int, int]
-    sublattice: str
-    occupation_type: int
+    sublattice: ZBUCell
+    occupation_type: OccupationType
     location: np.ndarray
 
-    # TODO:
-    # Refactor methods in this class to avoid the implicit mutation of state
 
-    # I need some way to build a height map, but the lattice does not eazily accomodate in the z direction.
-    # To keep track of it I will probably have to grab the cell id and then the z location
-    # The next lattice site in the z direction since there is no integer measure of location
-    # Spparks solves this problem by flying adatoms in from the top of the simulation area
-    # There are 8 cols in a unit cell among all of the lattices and sublattices
-    # In both x and y directions there will be some column of atoms every 0.25a'
-    #
-    # The entire point of the height map is for deposition events
-
-    # Once the lattice is built every lattice location has an id.
-    # The neighbor lists go by the lattice site id.
-    #
-
-
+@dataclass
 class ZBLatticeState:
     """
     Every lattice is thought of as a superlattice of some unit cell.
@@ -90,7 +75,7 @@ class ZBLatticeState:
         Frontloading computational work by precomputing the neighbor lists for all sites in the simulation.
         """
         self.superlattice_dimensions: Tuple[int, int, int] = dimensions
-        self.sitelist = build_gaas_superlattice(dimensions)
+        self.sitelist = build_gaas_superlattice(dimensions=dimensions, inter=False)
         self.sites: Dict[int, LatticeSite] = {s.id: s for s in self.sitelist}
         self.fnn_lists: Dict[int, List[int]] = build_fnn_lists(
             self.sites, 0.44, dimensions
@@ -143,7 +128,9 @@ def build_snn_lists(
     return snn_lists
 
 
-def build_gaas_superlattice(dimensions: Tuple[int, int, int]) -> List[LatticeSite]:
+def build_gaas_superlattice(
+    dimensions: Tuple[int, int, int], inter: bool
+) -> List[LatticeSite]:
     nx, ny, nz = dimensions
     sites: List[LatticeSite] = []
     site_id: int = 0
@@ -155,8 +142,8 @@ def build_gaas_superlattice(dimensions: Tuple[int, int, int]) -> List[LatticeSit
                 LatticeSite(
                     id=site_id,
                     cell=(ix, iy, iz),
-                    sublattice=ZBUCell.FCC_1.name,
-                    occupation_type=OccupationType.EMPTY.value,
+                    sublattice=ZBUCell.FCC_1,
+                    occupation_type=OccupationType.EMPTY,
                     location=np.add(np.array(position), uc_origin),
                 )
             )
@@ -166,34 +153,35 @@ def build_gaas_superlattice(dimensions: Tuple[int, int, int]) -> List[LatticeSit
                 LatticeSite(
                     id=site_id,
                     cell=(ix, iy, iz),
-                    sublattice=ZBUCell.FCC_2.name,
-                    occupation_type=OccupationType.EMPTY.value,
+                    sublattice=ZBUCell.FCC_2,
+                    occupation_type=OccupationType.EMPTY,
                     location=np.add(np.array(position), uc_origin),
                 )
             )
             site_id += 1
-        for position in ZBUCell.TET_1.value:
-            sites.append(
-                LatticeSite(
-                    id=site_id,
-                    cell=(ix, iy, iz),
-                    sublattice=ZBUCell.TET_1.name,
-                    occupation_type=OccupationType.EMPTY.value,
-                    location=np.add(np.array(position), uc_origin),
+        if inter:
+            for position in ZBUCell.TET_1.value:
+                sites.append(
+                    LatticeSite(
+                        id=site_id,
+                        cell=(ix, iy, iz),
+                        sublattice=ZBUCell.TET_1,
+                        occupation_type=OccupationType.EMPTY,
+                        location=np.add(np.array(position), uc_origin),
+                    )
                 )
-            )
-        site_id += 1
-        for position in ZBUCell.TET_2.value:
-            sites.append(
-                LatticeSite(
-                    id=site_id,
-                    cell=(ix, iy, iz),
-                    sublattice=ZBUCell.TET_2.name,
-                    occupation_type=OccupationType.EMPTY.value,
-                    location=np.add(np.array(position), uc_origin),
-                )
-            )
             site_id += 1
+            for position in ZBUCell.TET_2.value:
+                sites.append(
+                    LatticeSite(
+                        id=site_id,
+                        cell=(ix, iy, iz),
+                        sublattice=ZBUCell.TET_2,
+                        occupation_type=OccupationType.EMPTY,
+                        location=np.add(np.array(position), uc_origin),
+                    )
+                )
+                site_id += 1
 
     return sites
 
@@ -209,7 +197,7 @@ def dump_zblattice(lat: ZBLatticeState) -> None:
         fnn_list = lat.fnn_lists[site_id]
         snn_list = lat.snn_lists[site_id]
         print(
-            f"\nsite-id: {site_id}, cell: {lat.sites[site_id].cell}, sublattice: {lat.sites[site_id].sublattice}"
+            f"\nsite-id: {site_id}, cell: {lat.sites[site_id].cell}, sublattice: {lat.sites[site_id].sublattice.name}"
         )
         print(f"location: {lat.sites[site_id].location}")
         print(f"fnns: {fnn_list}")
@@ -239,6 +227,31 @@ def debug_fnn_distance(
         print(f"dist: {dist}, id: {id}, loc: {loc}, sublattice: {sublattice}")
 
 
+def set_gaas_001_substrate(lat: ZBLatticeState, layers: int) -> bool:
+    """Only does one layer but will need to do more"""
+    if layers < 1:
+        return False
+    # layer: int = layers
+    for _, s in lat.sites.items():
+        if s.location[2] == 0:
+            s.occupation_type = OccupationType.GA.value
+            continue
+        elif s.location == 0.25:
+            s.occupation_type = OccupationType.AS.value
+            continue
+    return True
+
+
+@dataclass
+class SimulationEvent:
+    # Diffusion for example would be from site_a to site_b
+    process: Process
+    propensity: float
+    site_a: LatticeSite
+    site_b: LatticeSite
+
+
+@dataclass
 class KMCSimulation:
     """
     The siulation engine.
@@ -246,17 +259,7 @@ class KMCSimulation:
     Only III-V compounds on a ZB lattice are supported
     """
 
-    # III_flux: float = 0.1
-    # V_flux: float = 0.8
     flux_def = {"III": 0.1, "V": 0.8}
-
-    # TODO:
-    # Implement data model for events
-    # implement the event list
-    # implement event execution
-    # This is a starter list for the processes, built it correctly later
-    # Doing the very simple strat where event occur in serial fasion, they have no shot of interfereing with each other.
-    # This also makes the simulation_time meaningless
 
     def __init__(
         self,
@@ -275,49 +278,71 @@ class KMCSimulation:
         # }
         # self.flux = flux
 
-    def _execute_event(self, event):
-        event += 0
-        return []
 
-    def get_available_events(self):
-        """
-        Builds the total possible event list for every site on the lattice
-        """
-        pass
+def _execute_event(sim, event):
+    event += 0
+    return []
 
-    # def kmc_step(self) -> bool:
-    #    """
-    #    Select and execute a kmc event via the Gilespie algo.
-    #    This is the same method for choosing an event in spparks.
-    #    Returns: boolean success flag
-    #    """
 
-    #    events, _ = self.get_available_events()
-    #    if not events:
-    #        return False
+def get_available_events(sim: KMCSimulation) -> List[SimulationEvent]:
+    """
+    Builds the total possible event list for every site on the lattice
+    """
+    eventlist: List[SimulationEvent] = []
+    lat = sim.lattice_state
+    for site in lat.sitelist:
+        get_diffusion_events(lat, site)
 
-    #    # pull a random number in [0,1)
-    #    r = random.random()
+    return []
 
-    #    # add all rates and compute a target in [0,R)
-    #    rate_list = [rate for rate in events]
-    #    total_rate = np.sum(rate_list)
-    #    cdf = np.cumulative_sum(rate_list)
-    #    target = total_rate * r
 
-    #    # Pick an event out and execute it
-    #    event_ind = np.searchsorted(cdf, target)
-    #    self._execute_event(events[event_ind])
+def get_diffusion_events(
+    lat: ZBLatticeState, site: LatticeSite
+) -> List[SimulationEvent]:
+    neighbors_id: List[int] = lat.fnn_lists[site.id]
+    events: List[SimulationEvent] = []
 
-    #    # update simulation time and event counter
-    #    self.time += -np.log(r) / total_rate
-    #    self.event_count += 1
+    for id in neighbors_id:
+        neighbor = lat.sites[id]
+        match neighbor.occupation_type:
+            case OccupationType.EMPTY:
+                events.append(SimulationEvent())
+    return []
 
-    #    return True
 
-    def run(self):
-        """The go button on the simulation"""
-        return
+def kmc_step(sim: KMCSimulation) -> bool:
+    """
+    Select and execute a kmc event via the Gilespie algo.
+    This is the same method for choosing an event in spparks.
+    Returns: boolean success flag
+    """
+
+    events = get_available_events(sim)
+    if not events:
+        return False
+
+    # pull a random number in [0,1)
+    r = random.random()
+
+    # add all rates and compute a target in [0,R)
+    rate_list = [rate for rate in events]
+    total_rate = np.sum(rate_list)
+    cdf = np.cumulative_sum(rate_list)
+    target = total_rate * r
+
+    # Pick an event out and execute it
+    event_ind = np.searchsorted(cdf, target)
+    _execute_event(sim, events[event_ind])
+
+    # update simulation time and event counter
+    sim.simulation_time += -np.log(r) / total_rate
+    sim.event_count += 1
+
+    return True
+
+
+def run():
+    return
 
 
 def main():

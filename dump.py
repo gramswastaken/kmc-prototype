@@ -41,3 +41,18 @@
 # self.site_to_col = {}
 # self.col_to_sites = {}
 # self.max_height = dimensions[2]
+#  p
+#
+# TODO:
+# Refactor methods in this class to avoid the implicit mutation of state
+
+# The next lattice site in the z direction since there is no integer measure of location
+# Spparks solves this problem by flying adatoms in from the top of the simulation area
+# There are 8 cols in a unit cell among all of the lattices and sublattices
+# In both x and y directions there will be some column of atoms every 0.25a'
+#
+# The entire point of the height map is for deposition events
+
+# Once the lattice is built every lattice location has an id.
+# The neighbor lists go by the lattice site id.
+#
