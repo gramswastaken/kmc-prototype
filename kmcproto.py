@@ -1,5 +1,5 @@
 from enum import Enum, IntEnum
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
 import numpy as np
 import scipy as sp
@@ -47,6 +47,10 @@ class Process:
     """Single process with Arrheius rate"""
 
     name: str
+
+
+@dataclass
+class DiffusionProcess(Process):
     barrier: float
     prefactor: float = default_prefactor
 
@@ -59,10 +63,8 @@ class DepositionProcess(Process):
     gr: float = 0
     area: float = 1
 
-    def rate(self, temperature) -> float:
+    def rate(self) -> float:
         return self.gr / (1 / self.area)
-
-    pass
 
 
 @dataclass
@@ -272,20 +274,19 @@ class SimulationEvent:
     # Diffusion for example would be from site_a to site_b
     process: Process
     rate: float
+    type: EventType
+
+
+@dataclass
+class DiffusionEvent(SimulationEvent):
     site_a: LatticeSite
     site_b: LatticeSite
 
 
-# class DiffusionEvent:
-#    site_a: LatticeSite
-#    site_b: LatticeSite
-#    pass
-#
-#
-# class DepositionEvent:
-#    pass
-#
-#
+@dataclass
+class DepositionEvent(SimulationEvent):
+    site: LatticeSite
+    species: ZBUCell
 
 
 @dataclass
@@ -329,6 +330,24 @@ class KMCSimulation:
 
 
 def _execute_event(sim: KMCSimulation, event: SimulationEvent) -> bool:
+    # The referencing sites through the simulation is un necessary but I wanted to avoid implicitly mutating it
+    lat = sim.lattice_state
+    if isinstance(event, DiffusionEvent):
+        site_a = lat.sites[event.site_a.id]
+        site_b = lat.sites[event.site_b.id]
+        site_b.occupation_type = site_a.occupation_type
+        site_a.occupation_type = OccupationType.EMPTY
+        return True
+
+    if isinstance(event, DepositionEvent):
+        site = lat.sites[event.site.id]
+        if event.species == ZBUCell.FCC_1:
+            site.occupation_type = OccupationType.GA
+            return True
+        if event.species == ZBUCell.FCC_2:
+            site.occupation_type = OccupationType.AS
+            return True
+
     return False
 
 
@@ -362,31 +381,31 @@ def get_deposition_events(
     if site.sublattice == ZBUCell.FCC_1:
         process = DepositionProcess(
             "dep",
-            barrier=0,
             gr=sim.deposition_rates[OccupationType.GA],
             area=sim.deposition_area,
         )
         return [
-            SimulationEvent(
+            DepositionEvent(
                 process=process,
-                rate=process.rate(temperature=1),
-                site_a=site,
-                site_b=site,
+                rate=process.rate(),
+                site=site,
+                species=ZBUCell.FCC_1,
+                type=EventType.DEPOSITION,
             )
         ]
     if site.sublattice == ZBUCell.FCC_2:
         process = DepositionProcess(
             "dep",
-            barrier=0,
             gr=sim.deposition_rates[OccupationType.AS],
             area=sim.deposition_area,
         )
         return [
-            SimulationEvent(
+            DepositionEvent(
                 process=process,
-                rate=process.rate(temperature=1),
-                site_a=site,
-                site_b=site,
+                rate=process.rate(),
+                site=site,
+                species=ZBUCell.FCC_2,
+                type=EventType.DEPOSITION,
             )
         ]
     return []
@@ -417,14 +436,18 @@ def get_diffusion_events(
             barrier: float = (
                 site_energy - sim.bond_energy[(OccupationType.GA, OccupationType.AS)]
             )
-            process = Process(
-                f"{site.occupation_type.name}-{neighbor.occupation_type.name}-hop",
-                barrier,
+            process = DiffusionProcess(
+                name=f"{site.occupation_type.name}-{neighbor.occupation_type.name}-hop",
+                barrier=barrier,
             )
             rate: float = process.rate(sim.temperature)
             events.append(
-                SimulationEvent(
-                    process=process, rate=rate, site_a=site, site_b=neighbor
+                DiffusionEvent(
+                    process=process,
+                    rate=rate,
+                    site_a=site,
+                    site_b=neighbor,
+                    type=EventType.DIFFUSION,
                 )
             )
     return events
@@ -475,8 +498,85 @@ def kmc_step(sim: KMCSimulation) -> bool:
     return True
 
 
-def run():
-    return
+def get_sim_stats(sim: KMCSimulation) -> Dict[str, Any]:
+    num_antisites: int = 0
+    for site in sim.lattice_state.sitelist:
+        sublattice: ZBUCell = site.sublattice
+        if sublattice == ZBUCell.FCC_1:
+            if site.occupation_type == OccupationType.AS:
+                num_antisites += 1
+        if sublattice == ZBUCell.FCC_2:
+            if site.occupation_type == OccupationType.GA:
+                num_antisites += 1
+
+    height_map = calculate_height_map(sim)
+    mean_height = np.mean(height_map)
+    rms_roughness = np.sqrt(np.mean((np.max(height_map) - mean_height) ** 2))
+
+    stats: Dict[str, Any] = {
+        "num_antisites": num_antisites,
+        "mean heist": mean_height,
+        "rms roughness": rms_roughness,
+    }
+    return stats
+
+
+def calculate_height_map(sim: KMCSimulation):
+    """
+    Tosses out the current height map and rebuilds it based on the current lattice state
+    """
+    lat = sim.lattice_state
+    cols: Dict[Tuple[int, int], List[int]] = {}
+    height_map: List[List[int]] = []
+    for site in lat.sitelist:
+        col_x, col_y = _get_col_inx(sim, site)
+        cols[(col_x, col_y)].append(site.id)
+
+    # Sort the site ids in each column by z coordinate
+    for (col_x, col_y), site_ids in cols.items():
+        sorted_ids = sorted(site_ids, key=lambda sid: lat.sites[sid].location[2])
+
+        # Height goes by number of occupied sites, allows for vacancies and terraces
+        occupied = sum(
+            1 for sid in sorted_ids if lat.sites[sid].occupation_type.value != 0
+        )
+        height_map[col_x][col_y] = occupied
+
+    return height_map
+
+
+def _get_col_inx(sim: KMCSimulation, site: LatticeSite):
+    """
+    This explicitly only works for a ZB lattice.
+    Returns the column of a lattice site relevant for the height map.
+    """
+    ix, iy, _ = site.cell
+    x, y, _ = site.location
+
+    sub_col_x = (x % 1) * 4
+    col_x = ix * 4 + sub_col_x
+
+    sub_col_y = (y % 1) * 4
+    col_y = iy * 4 + sub_col_y
+
+    return col_x, col_y
+
+
+def run(sim: KMCSimulation, max_events: int, stats_interval: int):
+    for i in range(max_events):
+        if not kmc_step(sim):
+            print(f"Stopped after {i} steps/events")
+
+        if i % stats_interval == 0:
+            statistics: Dict[str, Any] = get_sim_stats(sim)
+            for name, value in statistics.items():
+                print(f"{name}, {value}")
+
+    pass
+
+
+def figure_dump_simulation(sim: KMCSimulation):
+    pass
 
 
 def main():
