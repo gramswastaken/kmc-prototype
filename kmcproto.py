@@ -55,6 +55,17 @@ class Process:
 
 
 @dataclass
+class DepositionProcess(Process):
+    gr: float = 0
+    area: float = 1
+
+    def rate(self, temperature) -> float:
+        return self.gr / (1 / self.area)
+
+    pass
+
+
+@dataclass
 class LatticeSite:
     id: int
     cell: Tuple[int, int, int]
@@ -234,21 +245,47 @@ def set_gaas_001_substrate(lat: ZBLatticeState, layers: int) -> bool:
     # layer: int = layers
     for _, s in lat.sites.items():
         if s.location[2] == 0:
-            s.occupation_type = OccupationType.GA.value
+            s.occupation_type = OccupationType.GA
             continue
         elif s.location == 0.25:
-            s.occupation_type = OccupationType.AS.value
+            s.occupation_type = OccupationType.AS
             continue
     return True
+
+
+def get_site_coordination(lat: ZBLatticeState, site: LatticeSite) -> int:
+    neighbor_ids = lat.fnn_lists[site.id]
+    coordination: int = 0
+    for nid in neighbor_ids:
+        if lat.sites[nid].occupation_type == OccupationType.EMPTY:
+            coordination += 1
+    return coordination
+
+
+class EventType(IntEnum):
+    DEPOSITION = 0
+    DIFFUSION = 1
 
 
 @dataclass
 class SimulationEvent:
     # Diffusion for example would be from site_a to site_b
     process: Process
-    propensity: float
+    rate: float
     site_a: LatticeSite
     site_b: LatticeSite
+
+
+# class DiffusionEvent:
+#    site_a: LatticeSite
+#    site_b: LatticeSite
+#    pass
+#
+#
+# class DepositionEvent:
+#    pass
+#
+#
 
 
 @dataclass
@@ -272,6 +309,18 @@ class KMCSimulation:
         self.lattice_state: ZBLatticeState = lattice_state
         self.simulation_time: float = 0.0
         self.event_count: int = 0
+        self.bond_energy = {
+            (OccupationType.GA, OccupationType.AS): 0.8,
+            (OccupationType.AS, OccupationType.GA): 0.8,
+            (OccupationType.GA, OccupationType.GA): 0.16,
+            (OccupationType.AS, OccupationType.AS): 0.2,
+        }
+        nx, ny, _ = self.lattice_state.superlattice_dimensions
+        self.deposition_area = nx * ny * 2
+        self.deposition_rates = {
+            OccupationType.GA: 0.1,
+            OccupationType.AS: 0.1,
+        }
         # self.process_list = process_list
         # self.rates = {
         #    proc.name: proc.rate(self.temperature) for proc in self.process_list.items()
@@ -279,9 +328,8 @@ class KMCSimulation:
         # self.flux = flux
 
 
-def _execute_event(sim, event):
-    event += 0
-    return []
+def _execute_event(sim: KMCSimulation, event: SimulationEvent) -> bool:
+    return False
 
 
 def get_available_events(sim: KMCSimulation) -> List[SimulationEvent]:
@@ -291,23 +339,108 @@ def get_available_events(sim: KMCSimulation) -> List[SimulationEvent]:
     eventlist: List[SimulationEvent] = []
     lat = sim.lattice_state
     for site in lat.sitelist:
-        get_diffusion_events(lat, site)
+        diff_events: List[SimulationEvent] = get_diffusion_events(sim, site)
+        dep_events: List[SimulationEvent] = get_deposition_events(sim, site)
+        eventlist += diff_events
+        eventlist += dep_events
+    return eventlist
 
+
+def get_deposition_events(
+    sim: KMCSimulation, site: LatticeSite
+) -> List[SimulationEvent]:
+    """
+    NOTE
+    Event handling is extremely janky,
+    the process and event model is not properly designed to accomodate depsoition
+    """
+
+    lat = sim.lattice_state
+    coord = get_site_coordination(lat, site)
+    if coord in (4, 3, 0):
+        return []
+    if site.sublattice == ZBUCell.FCC_1:
+        process = DepositionProcess(
+            "dep",
+            barrier=0,
+            gr=sim.deposition_rates[OccupationType.GA],
+            area=sim.deposition_area,
+        )
+        return [
+            SimulationEvent(
+                process=process,
+                rate=process.rate(temperature=1),
+                site_a=site,
+                site_b=site,
+            )
+        ]
+    if site.sublattice == ZBUCell.FCC_2:
+        process = DepositionProcess(
+            "dep",
+            barrier=0,
+            gr=sim.deposition_rates[OccupationType.AS],
+            area=sim.deposition_area,
+        )
+        return [
+            SimulationEvent(
+                process=process,
+                rate=process.rate(temperature=1),
+                site_a=site,
+                site_b=site,
+            )
+        ]
     return []
 
 
 def get_diffusion_events(
-    lat: ZBLatticeState, site: LatticeSite
+    sim: KMCSimulation, site: LatticeSite
 ) -> List[SimulationEvent]:
+    """
+    Computes diffusion barriers for a given lattice site based on the amrani model.
+    An atom must break all bonds except for one fnn bond to diffuse.
+    """
+    # I think later on these checks should go everywhere and include a result type
+    if site.occupation_type == OccupationType.EMPTY:
+        return []
+
+    lat = sim.lattice_state
     neighbors_id: List[int] = lat.fnn_lists[site.id]
     events: List[SimulationEvent] = []
+    site_energy: float = compute_site_binding_energy(sim, site)
 
-    for id in neighbors_id:
-        neighbor = lat.sites[id]
-        match neighbor.occupation_type:
-            case OccupationType.EMPTY:
-                events.append(SimulationEvent())
-    return []
+    for nid in neighbors_id:
+        neighbor = lat.sites[nid]
+        neighbor_coord = get_site_coordination(lat, neighbor)
+        if neighbor_coord == 0 or neighbor == 1:
+            continue
+        if neighbor.occupation_type == OccupationType.EMPTY:
+            barrier: float = (
+                site_energy - sim.bond_energy[(OccupationType.GA, OccupationType.AS)]
+            )
+            process = Process(
+                f"{site.occupation_type.name}-{neighbor.occupation_type.name}-hop",
+                barrier,
+            )
+            rate: float = process.rate(sim.temperature)
+            events.append(
+                SimulationEvent(
+                    process=process, rate=rate, site_a=site, site_b=neighbor
+                )
+            )
+    return events
+
+
+def compute_site_binding_energy(sim: KMCSimulation, site: LatticeSite) -> float:
+    lat: ZBLatticeState = sim.lattice_state
+    fnn_ids: List[int] = lat.fnn_lists[site.id]
+    snn_ids: List[int] = lat.snn_lists[site.id]
+    neighbor_ids: List[int] = fnn_ids + snn_ids
+    energy: float = 0
+    for nid in neighbor_ids:
+        neighbor = lat.sites[nid]
+        energy += sim.bond_energy[(site.occupation_type, neighbor.occupation_type)]
+
+    return energy
 
 
 def kmc_step(sim: KMCSimulation) -> bool:
@@ -325,7 +458,8 @@ def kmc_step(sim: KMCSimulation) -> bool:
     r = random.random()
 
     # add all rates and compute a target in [0,R)
-    rate_list = [rate for rate in events]
+    # rates = {event.rate: event for event in events}
+    rate_list = sum(event.rate for event in events)
     total_rate = np.sum(rate_list)
     cdf = np.cumulative_sum(rate_list)
     target = total_rate * r
@@ -334,7 +468,7 @@ def kmc_step(sim: KMCSimulation) -> bool:
     event_ind = np.searchsorted(cdf, target)
     _execute_event(sim, events[event_ind])
 
-    # update simulation time and event counter
+    ## update simulation time and event counter
     sim.simulation_time += -np.log(r) / total_rate
     sim.event_count += 1
 
