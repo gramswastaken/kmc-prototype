@@ -249,7 +249,7 @@ def set_gaas_001_substrate(lat: ZBLatticeState, layers: int) -> bool:
         if s.location[2] == 0:
             s.occupation_type = OccupationType.GA
             continue
-        elif s.location == 0.25:
+        elif s.location[2] == 0.25:
             s.occupation_type = OccupationType.AS
             continue
     return True
@@ -315,6 +315,8 @@ class KMCSimulation:
             (OccupationType.AS, OccupationType.GA): 0.8,
             (OccupationType.GA, OccupationType.GA): 0.16,
             (OccupationType.AS, OccupationType.AS): 0.2,
+            (OccupationType.GA, OccupationType.EMPTY): 0.0,
+            (OccupationType.AS, OccupationType.EMPTY): 0.0,
         }
         nx, ny, _ = self.lattice_state.superlattice_dimensions
         self.deposition_area = nx * ny * 2
@@ -527,9 +529,19 @@ def calculate_height_map(sim: KMCSimulation):
     """
     lat = sim.lattice_state
     cols: Dict[Tuple[int, int], List[int]] = {}
-    height_map: List[List[int]] = []
+    height_map: List[List[int]] = [
+        [0] * (lat.superlattice_dimensions[0] * 4)
+        for _ in range(lat.superlattice_dimensions[1] * 4)
+    ]
+
     for site in lat.sitelist:
         col_x, col_y = _get_col_inx(sim, site)
+        col_x = int(col_x)
+        col_y = int(col_y)
+
+        if (col_x, col_y) not in cols:
+            cols[(col_x, col_y)] = []
+
         cols[(col_x, col_y)].append(site.id)
 
     # Sort the site ids in each column by z coordinate
@@ -537,9 +549,10 @@ def calculate_height_map(sim: KMCSimulation):
         sorted_ids = sorted(site_ids, key=lambda sid: lat.sites[sid].location[2])
 
         # Height goes by number of occupied sites, allows for vacancies and terraces
-        occupied = sum(
+        occupied: int = sum(
             1 for sid in sorted_ids if lat.sites[sid].occupation_type.value != 0
         )
+
         height_map[col_x][col_y] = occupied
 
     return height_map
@@ -563,26 +576,26 @@ def _get_col_inx(sim: KMCSimulation, site: LatticeSite):
 
 
 def run(sim: KMCSimulation, max_events: int, stats_interval: int):
+    set_gaas_001_substrate(sim.lattice_state, 1)
+    print("run function called")
     for i in range(max_events):
         if not kmc_step(sim):
             print(f"Stopped after {i} steps/events")
+            break
 
         if i % stats_interval == 0:
             statistics: Dict[str, Any] = get_sim_stats(sim)
             for name, value in statistics.items():
                 print(f"{name}, {value}")
-
-    pass
+    return
 
 
 def figure_dump_simulation(sim: KMCSimulation):
     pass
 
 
-def main():
-    pass
-    # process_list = (
-    #    Process(default_prefactor, 0.0, "ga_adsorption"),
-    #    Process(default_prefactor, 1.1, "ga_diffusion_110"),
-    #    Process(default_prefactor, 0.5, "ga_diffusion_011"),
-    # )
+if __name__ == "__main__":
+    print("this block ran")
+    lat = ZBLatticeState((5, 5, 5))
+    sim = KMCSimulation(lattice_state=lat, temperature=850)
+    run(sim, 10000, 1000)
