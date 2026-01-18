@@ -4,6 +4,8 @@ from typing import Tuple, Dict, List
 import itertools
 import numpy as np
 
+from kmc_tools.logging import LogParams
+
 
 class ZBUCell(Enum):
     """Const container for Zincblende unit cell locations"""
@@ -55,7 +57,7 @@ class LatticeSite:
 class ZBLatticeState:
     """
     Every lattice is thought of as a superlattice of some unit cell.
-    The default state is GaAs on a zincblende lattice with tetragonal interstitial positions
+    Only works for GaAs atm
     """
 
     def __init__(self, dimensions: Tuple[int, int, int] = (1, 1, 1)) -> None:
@@ -174,25 +176,27 @@ def build_gaas_superlattice(
     return sites
 
 
-def dump_zblattice_spparksfmt(lat: ZBLatticeState) -> None:
+def dump_zblattice_spparksfmt(lat: ZBLatticeState, params: LogParams) -> None:
     sites_def: List = []
     neighbors_def: List[int] = []
     for site in lat.sitelist:
         sitestr = [
-            site.id,
-            site.location[0],
-            site.location[1],
-            site.location[2],
+            str(site.id),
+            str(site.location[0]),
+            str(site.location[1]),
+            str(site.location[2]),
         ]
-        nlist = [site.id] + [nid for nid in lat.fnn_lists[site.id]]
+        nlist = [str(site.id)] + [str(nid) for nid in lat.fnn_lists[site.id]]
         sites_def.append(sitestr)
-        neighbors_def.append(neighbors_def)
+        neighbors_def.append(nlist)
 
     # this line of code is why python is both great and cursed
-    sdef_column_widths: List[int] = [max(map(len, col) for col in zip(*sites_def))]
-    ndef_col_widths: List[int] = [max(map(len, col) for col in zip(*neighbors_def))]
+    sdef_column_widths: List[int] = [max(map(len, col)) for col in zip(*sites_def)]
+    ndef_col_widths: List[int] = [max(map(len, col)) for col in zip(*neighbors_def)]
 
-    with open("somefile", "w") as log:
+    logfile = params.log_path + f"/{params.name}-spparksfmt-lat"
+
+    with open(logfile, "w") as log:
         heading: str = (
             "simulation \n",
             "3 dimension \n",
@@ -202,24 +206,27 @@ def dump_zblattice_spparksfmt(lat: ZBLatticeState) -> None:
             f"0 {lat.superlattice_dimensions[1]} ylo yhi \n",
             f"0 {lat.superlattice_dimensions[2]} zlo zhi \n",
         )
-        log.write(heading)
+        for line in heading:
+            log.write(line)
 
-        log.write("\n Sites \n")
+        log.write("\nSites\n\n")
         for sitestr in sites_def:
             log.write(
-                " ".join(
+                "\t".join(
                     sdef.ljust(colwidth)
                     for sdef, colwidth in zip(sitestr, sdef_column_widths)
                 )
             )
+            log.write("\n")
 
-        log.write("\n Neighbors \n")
+        log.write("\nNeighbors\n\n")
         for nlist in neighbors_def:
             log.write(
-                " ".join(
+                "\t".join(
                     nid.ljust(colwidth) for nid, colwidth in zip(nlist, ndef_col_widths)
                 )
             )
+            log.write("\n")
 
         # log.write("\n Values \n")
 
@@ -269,14 +276,17 @@ def set_gaas_001_substrate(lat: ZBLatticeState, layers: int) -> bool:
     """Only does one layer but will need to do more"""
     if layers < 1:
         return False
-    # layer: int = layers
-    for _, s in lat.sites.items():
-        if s.location[2] == 0:
-            s.occupation_type = OccupationType.GA
-            continue
-        elif s.location[2] == 0.25:
-            s.occupation_type = OccupationType.AS
-            continue
+    layer: int = layers
+    while layer < 0:
+        for _, s in lat.sites.items():
+            if s.location[2] == layer:
+                s.occupation_type = OccupationType.GA
+                continue
+            elif s.location[2] == layer + 0.25:
+                s.occupation_type = OccupationType.AS
+                continue
+        layer -= 1
+
     return True
 
 

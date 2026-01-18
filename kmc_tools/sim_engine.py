@@ -244,6 +244,7 @@ def kmc_step(sim: KMCSimulation) -> bool:
 
     events = get_available_events(sim)
     if not events:
+        print("events empty")
         return False
 
     # pull a random number in [0,1)
@@ -341,7 +342,7 @@ def _get_col_inx(sim: KMCSimulation, site: LatticeSite):
 
 
 def run(sim: KMCSimulation, max_events: int, stats_interval: int):
-    set_gaas_001_substrate(sim.lattice_state, 1)
+    set_gaas_001_substrate(sim.lattice_state, 2)
     print("run function called")
     for i in range(max_events):
         if not kmc_step(sim):
@@ -353,17 +354,6 @@ def run(sim: KMCSimulation, max_events: int, stats_interval: int):
             for name, value in statistics.items():
                 print(f"{name}, {value}")
     return
-
-
-def log_init(data_dir: str, name: str) -> str:
-    """
-    Makes a directory in the data dir, it is in the format '{name}-{hash} where hash is a unique uuid'
-    """
-    assert " " not in name
-
-    hash = uuid.uuid4()[:8]
-    # os.mkdir(os.path(datadir) + f"/{name}-{hash}")
-    pass
 
 
 def log_event(event: SimulationEvent, filename: str):
@@ -379,40 +369,6 @@ def log_event(event: SimulationEvent, filename: str):
         site_b: LatticeSite = event.site_b
         print(f"thing: {name}, from: {site_a}, to: {site_b}, rate: {rate}")
         pass
-
-
-def kmc_step_verbose_logging(sim: KMCSimulation):
-    events = get_available_events(sim)
-    if not events:
-        return False
-
-    # pull a random number in [0,1)
-    r = random.random()
-
-    # add all rates and compute a target in [0,R)
-    # rates = {event.rate: event for event in events}
-    rate_list = sum(event.rate for event in events)
-    total_rate = np.sum(rate_list)
-    cdf = np.cumulative_sum(rate_list)
-    target = total_rate * r
-
-    # Pick an event out and execute it
-    event_ind = np.searchsorted(cdf, target)
-    execute_event(sim, events[event_ind])
-
-    ## update simulation time and event counter
-    sim.simulation_time += -np.log(r) / total_rate
-    sim.event_count += 1
-
-    return True
-
-
-def run_verbose_logging(sim: KMCSimulation, max_events: int, stats_interval: int):
-    pass
-
-
-def prong():
-    print(os.getcwd())
 
 
 def figure_dump_simulation(sim: KMCSimulation, filename: str):
