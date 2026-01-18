@@ -10,5 +10,6 @@ wheels/
 .venv
 
 # mine
+.DS_Store
 data/
 
