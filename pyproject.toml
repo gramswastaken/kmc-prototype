@@ -1,7 +1,11 @@
 [project]
-name = "kmc"
-version = "0.1.0"
-description = "Add your description here"
+name = "kmc_tools"
+version = "0.0.1"
+description = "wip toolkit for kinetic monte carlo simulations of III-Vs"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.1",
+    "scipy>=1.17.0",
+]
