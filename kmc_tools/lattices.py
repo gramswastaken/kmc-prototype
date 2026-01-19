@@ -3,6 +3,7 @@ from enum import Enum, IntEnum
 from typing import Tuple, Dict, List
 import itertools
 import numpy as np
+import scipy as sp
 
 from kmc_tools.logging import LogParams
 
@@ -67,12 +68,31 @@ class ZBLatticeState:
         self.superlattice_dimensions: Tuple[int, int, int] = dimensions
         self.sitelist = build_gaas_superlattice(dimensions=dimensions, inter=False)
         self.sites: Dict[int, LatticeSite] = {s.id: s for s in self.sitelist}
-        self.fnn_lists: Dict[int, List[int]] = build_fnn_lists(
+        self.fnn_lists: Dict[int, List[int]] = build_fnn_lists_tree_search(
             self.sites, 0.44, dimensions
         )
         self.snn_lists: Dict[int, List[int]] = build_snn_lists(
             self.sites, self.fnn_lists
         )
+
+
+def build_fnn_lists_tree_search(
+    sites: Dict[int, LatticeSite], cutoff: float, dimensions: Tuple[int, int, int]
+) -> Dict[int, List[int]]:
+    site_ids = list(sites.keys())
+    neighbor_lists = {id: [] for id in site_ids}
+
+    dim = np.array(dimensions, dtype=float)
+    positions = np.array([sites[sid].location for sid in site_ids])
+
+    tree = sp.spatial.cKDTree(positions, boxsize=dim)
+    pairs = tree.query_pairs(r=cutoff, output_type="ndarray")
+
+    for i, j in pairs:
+        neighbor_lists[site_ids[i]].append(site_ids[j])
+        neighbor_lists[site_ids[j]].append(site_ids[i])
+
+    return neighbor_lists
 
 
 def build_fnn_lists(
@@ -277,7 +297,7 @@ def set_gaas_001_substrate(lat: ZBLatticeState, layers: int) -> bool:
     if layers < 1:
         return False
     layer: int = layers
-    while layer < 0:
+    while layer > 0:
         for _, s in lat.sites.items():
             if s.location[2] == layer:
                 s.occupation_type = OccupationType.GA

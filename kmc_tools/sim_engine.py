@@ -5,8 +5,7 @@ import numpy as np
 import scipy as sp
 from matplotlib import pyplot as plt
 import random
-import uuid
-import os
+import warnings
 
 from kmc_tools.lattices import (
     LatticeSite,
@@ -17,7 +16,8 @@ from kmc_tools.lattices import (
     set_gaas_001_substrate,
 )
 
-kb = sp.constants.k
+# kb = sp.constants.k
+kb = 8.617e-5
 default_prefactor = 1e13
 
 
@@ -69,7 +69,20 @@ class DiffusionProcess(Process):
     prefactor: float = default_prefactor
 
     def rate(self, temperature: float) -> float:
-        return self.prefactor * np.exp(-self.barrier / (kb * temperature))
+        rate = self.prefactor * np.exp(-self.barrier / (kb * temperature))
+        return rate
+
+    # def rate(self, temperature: float) -> float:
+    #    with np.errstate(over="raise", divide="raise", invalid="raise"):
+    #        try:
+    #            rate = self.prefactor * np.exp(-self.barrier / (kb * temperature))
+    #            return rate
+    #        except FloatingPointError as e:
+    #            print(f"{e}:")
+    #            print(f"barrier: {self.barrier}")
+    #            print(f"prefactor: {self.prefactor}")
+    #            print(f"temp: {temperature}")
+    #            print(f"value: {-self.barrier / (kb * temperature)}")
 
 
 @dataclass
@@ -137,6 +150,20 @@ def get_available_events(sim: KMCSimulation) -> List[SimulationEvent]:
         dep_events: List[SimulationEvent] = get_deposition_events(sim, site)
         eventlist += diff_events
         eventlist += dep_events
+    return eventlist
+
+
+def get_available_events_site(
+    sim: KMCSimulation, site: LatticeSite
+) -> List[SimulationEvent]:
+    """
+    Builds the total possible event list for every site on the lattice
+    """
+    eventlist: List[SimulationEvent] = []
+    diff_events: List[SimulationEvent] = get_diffusion_events(sim, site)
+    dep_events: List[SimulationEvent] = get_deposition_events(sim, site)
+    eventlist += diff_events
+    eventlist += dep_events
     return eventlist
 
 
@@ -235,7 +262,7 @@ def compute_site_binding_energy(sim: KMCSimulation, site: LatticeSite) -> float:
     return energy
 
 
-def kmc_step(sim: KMCSimulation) -> bool:
+def kmc_step_global(sim: KMCSimulation) -> bool:
     """
     Select and execute a kmc event via the Gilespie algo.
     This is the same method for choosing an event in spparks.
@@ -261,6 +288,41 @@ def kmc_step(sim: KMCSimulation) -> bool:
     event_ind = np.searchsorted(cdf, target)
     execute_event(sim, events[event_ind])
 
+    __import__("pprint").pprint(f"events: {events} \n selected: {events[event_ind]}")
+    ## update simulation time and event counter
+    sim.simulation_time += -np.log(r) / total_rate
+    sim.event_count += 1
+
+    return True
+
+
+def kmc_step_single(sim: KMCSimulation) -> bool:
+    """
+    Select and execute a kmc event via the Gilespie algo.
+    This is the same method for choosing an event in spparks.
+    Returns: boolean success flag
+    """
+    site = random.choice(sim.lattice_state.sitelist)
+    events = get_available_events_site(sim, site)
+    if not events:
+        print("events empty")
+        return True
+
+    # pull a random number in [0,1)
+    r = random.random()
+
+    # add all rates and compute a target in [0,R)
+    # rates = {event.rate: event for event in events}
+    rate_list = sum(event.rate for event in events)
+    total_rate = np.sum(rate_list)
+    cdf = np.cumulative_sum(rate_list)
+    target = total_rate * r
+
+    # Pick an event out and execute it
+    event_ind = np.searchsorted(cdf, target)
+    execute_event(sim, events[event_ind])
+
+    __import__("pprint").pprint(f"events: {events} \n selected: {events[event_ind]}")
     ## update simulation time and event counter
     sim.simulation_time += -np.log(r) / total_rate
     sim.event_count += 1
@@ -345,7 +407,7 @@ def run(sim: KMCSimulation, max_events: int, stats_interval: int):
     set_gaas_001_substrate(sim.lattice_state, 2)
     print("run function called")
     for i in range(max_events):
-        if not kmc_step(sim):
+        if not kmc_step_single(sim):
             print(f"Stopped after {i} steps/events")
             break
 
