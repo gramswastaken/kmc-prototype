@@ -2,10 +2,11 @@ from enum import IntEnum
 from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
 import numpy as np
-import scipy as sp
+
+# import scipy as sp
 from matplotlib import pyplot as plt
 import random
-import warnings
+# import warnings
 
 from kmc_tools.lattices import (
     LatticeSite,
@@ -103,7 +104,6 @@ class EventType(IntEnum):
 class SimulationEvent:
     process: Process
     rate: float
-    type: EventType
 
 
 @dataclass
@@ -186,7 +186,6 @@ def get_deposition_events(
                 rate=process.rate(),
                 site=site,
                 species=ZBUCell.FCC_1,
-                type=EventType.DEPOSITION,
             )
         ]
     if site.sublattice == ZBUCell.FCC_2:
@@ -201,7 +200,6 @@ def get_deposition_events(
                 rate=process.rate(),
                 site=site,
                 species=ZBUCell.FCC_2,
-                type=EventType.DEPOSITION,
             )
         ]
     return []
@@ -243,7 +241,6 @@ def get_diffusion_events(
                     rate=rate,
                     site_a=site,
                     site_b=neighbor,
-                    type=EventType.DIFFUSION,
                 )
             )
     return events
@@ -365,7 +362,7 @@ def calculate_height_map(sim: KMCSimulation) -> List[List[int]]:
     ]
 
     for site in lat.sitelist:
-        col_x, col_y = _get_col_inx(sim, site)
+        col_x, col_y = _get_col_inx(site)
         col_x = int(col_x)
         col_y = int(col_y)
 
@@ -386,7 +383,7 @@ def calculate_height_map(sim: KMCSimulation) -> List[List[int]]:
     return height_map
 
 
-def _get_col_inx(sim: KMCSimulation, site: LatticeSite):
+def _get_col_inx(site: LatticeSite):
     """
     This explicitly only works for a ZB lattice.
     Returns the column of a lattice site relevant for the height map.
@@ -418,19 +415,17 @@ def run(sim: KMCSimulation, max_events: int, stats_interval: int):
     return
 
 
-def log_event(event: SimulationEvent, filename: str):
-    etype: EventType = event.type
-
-    if etype == EventType.DIFFUSION:
+def log_event(event: SimulationEvent):
+    # if etype == EventType.DIFFUSION:
+    if isinstance(event, DiffusionEvent):
         # idk if this typecase is helpful
-        event: DiffusionEvent = event
+        #    event: DiffusionEvent = event
         rate: float = event.rate
-        process: DiffusionProcess = event.process
-        name = process.name
+        # process: DiffusionProcess = event.process
+        name = event.process.name
         site_a: LatticeSite = event.site_a
         site_b: LatticeSite = event.site_b
         print(f"thing: {name}, from: {site_a}, to: {site_b}, rate: {rate}")
-        pass
 
 
 def figure_dump_simulation(sim: KMCSimulation, filename: str):
