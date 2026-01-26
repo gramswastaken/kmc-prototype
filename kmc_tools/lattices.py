@@ -1,7 +1,8 @@
+import itertools
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Tuple, Dict, List
-import itertools
+from typing import Dict, List, Tuple
+
 import numpy as np
 import scipy as sp
 
@@ -197,8 +198,8 @@ def build_gaas_superlattice(
 
 
 def dump_zblattice_spparksfmt(lat: ZBLatticeState, params: LogParams) -> None:
-    sites_def: List = []
-    neighbors_def: List[int] = []
+    sites_def: List[List[str]] = []
+    neighbors_def: List[List[str]] = []
     for site in lat.sitelist:
         sitestr = [
             str(site.id),
@@ -217,7 +218,7 @@ def dump_zblattice_spparksfmt(lat: ZBLatticeState, params: LogParams) -> None:
     logfile = params.log_path + f"/{params.name}-spparksfmt-lat"
 
     with open(logfile, "w") as log:
-        heading: str = (
+        heading: List[str] = [
             "simulation \n",
             "3 dimension \n",
             f"{len(lat.sitelist)} sites \n",
@@ -225,7 +226,7 @@ def dump_zblattice_spparksfmt(lat: ZBLatticeState, params: LogParams) -> None:
             f"0 {lat.superlattice_dimensions[0]} xlo xhi \n",
             f"0 {lat.superlattice_dimensions[1]} ylo yhi \n",
             f"0 {lat.superlattice_dimensions[2]} zlo zhi \n",
-        )
+        ]
         for line in heading:
             log.write(line)
 

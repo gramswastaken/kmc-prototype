@@ -216,33 +216,41 @@ def get_diffusion_events(
     if site.occupation_type == OccupationType.EMPTY:
         return []
 
+    # fnn are actually antisite hops
+    # snn are normal hops
+
     lat = sim.lattice_state
-    neighbors_id: List[int] = lat.fnn_lists[site.id]
+    neighbor_ids: List[int] = lat.fnn_lists[site.id] + lat.snn_lists[site.id]
     events: List[SimulationEvent] = []
     site_energy: float = compute_site_binding_energy(sim, site)
+    barrier: float = 0
+    antisite_bias: float = 1.1
 
-    for nid in neighbors_id:
+    for nid in neighbor_ids:
         neighbor = lat.sites[nid]
         neighbor_coord = get_site_coordination(lat, neighbor)
-        if neighbor_coord == 0 or neighbor == 1:
+
+        if neighbor_coord == 0 or neighbor_coord == 1:
             continue
-        if neighbor.occupation_type == OccupationType.EMPTY:
-            barrier: float = (
-                site_energy - sim.bond_energy[(OccupationType.GA, OccupationType.AS)]
+        if neighbor.occupation_type != OccupationType.EMPTY:
+            continue
+        if neighbor.sublattice != site.sublattice:
+            barrier += antisite_bias
+
+        barrier += site_energy - sim.bond_energy[(OccupationType.GA, OccupationType.AS)]
+        process = DiffusionProcess(
+            name=f"{site.occupation_type.name}-{neighbor.occupation_type.name}-hop",
+            barrier=barrier,
+        )
+        rate: float = process.rate(sim.temperature)
+        events.append(
+            DiffusionEvent(
+                process=process,
+                rate=rate,
+                site_a=site,
+                site_b=neighbor,
             )
-            process = DiffusionProcess(
-                name=f"{site.occupation_type.name}-{neighbor.occupation_type.name}-hop",
-                barrier=barrier,
-            )
-            rate: float = process.rate(sim.temperature)
-            events.append(
-                DiffusionEvent(
-                    process=process,
-                    rate=rate,
-                    site_a=site,
-                    site_b=neighbor,
-                )
-            )
+        )
     return events
 
 
