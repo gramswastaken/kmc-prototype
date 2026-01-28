@@ -16,6 +16,7 @@ from kmc_tools.lattices import (
     get_site_coordination,
     set_gaas_001_substrate,
 )
+from kmc_tools.logging import LogParams, LogEmitter, LogMessage
 
 # kb = sp.constants.k
 kb = 8.617e-5
@@ -30,12 +31,12 @@ class KMCSimulation:
     Only III-V compounds on a ZB lattice are supported
     """
 
-    flux_def = {"III": 0.1, "V": 0.8}
-
     def __init__(
         self,
         temperature: float,
         lattice_state: ZBLatticeState,
+        log_params: LogParams,
+        log_emitter: LogEmitter,
     ) -> None:
         self.temperature: float = temperature
         self.lattice_state: ZBLatticeState = lattice_state
@@ -55,12 +56,12 @@ class KMCSimulation:
             OccupationType.GA: 55555555.8,
             OccupationType.AS: 99995555.8,
         }
+        self.log_params = log_params
+        self.log_emitter = log_emitter
 
 
 @dataclass
 class Process:
-    """Single process with Arrheius rate"""
-
     name: str
 
 
@@ -293,8 +294,14 @@ def kmc_step_global(sim: KMCSimulation) -> bool:
     event_ind = np.searchsorted(cdf, target)
     execute_event(sim, events[event_ind])
 
-    __import__("pprint").pprint(f"events: {events} \n selected: {events[event_ind]}")
-    ## update simulation time and event counter
+    sim.log_emitter.emit(
+        msg=LogMessage(
+            name="event select and exe",
+            type="step",
+            time=sim.simulation_time,
+            payload={"events": events, "selected": events[event_ind]},
+        )
+    )
     sim.simulation_time += -np.log(r) / total_rate
     sim.event_count += 1
 
@@ -408,7 +415,7 @@ def _get_col_inx(site: LatticeSite):
     return col_x, col_y
 
 
-def run(sim: KMCSimulation, max_events: int, stats_interval: int):
+def sim_run(sim: KMCSimulation, max_events: int, stats_interval: int):
     set_gaas_001_substrate(sim.lattice_state, 2)
     print("run function called")
     for i in range(max_events):
